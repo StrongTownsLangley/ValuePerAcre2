@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Value Per Acre Overlay</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        #map {
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+        var map = L.map('map').setView([{AVGLAT}, {AVGLON}], 12);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+        }).addTo(map);
+
+        // Load GeoJSON files for each tax level
+        var numLevels = {LEVELS};
+        var taxLevels = [];
+        for (var i = 0; i < numLevels; i++) {
+            var taxLevel = L.geoJSON(null, {
+                style: function(feature) {
+                    var taxLevel = feature.properties.level;
+                    var hue = (1 - (taxLevel / numLevels)) * 240; // Interpolate hue from blue (240) to red (0)
+                    return {
+                        fillColor: 'hsl(' + hue + ', 100%, 50%)',
+                        weight: 0.5,
+                        opacity: 0.45,
+                        color: 'hsl(' + hue + ', 100%, 50%)',
+                        fillOpacity: 0.45
+                    };
+                }
+            });
+            taxLevels.push(taxLevel);
+        }
+
+        {DATALIST}
+
+        for (var i = 0; i < numLevels; i++) {
+            taxLevels[i].addTo(map);
+        }
+
+    </script>
+</body>
+</html>
