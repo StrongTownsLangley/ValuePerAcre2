@@ -2,7 +2,7 @@
 
 A modern Python implementation of the Value-per-Acre analysis tool, designed to create interactive maps for visualizing property tax revenue and land use efficiency.
 
-![valueperacre_map](https://github.com/StrongTownsLangley/ValuePerAcre/assets/160652425/e6086d8a-2f75-4d5f-9fb8-9a3ffa4089b9)
+![image](https://github.com/user-attachments/assets/35a498ae-e725-4642-a2df-676d9f3dbb92)
 
 ## What is Value-per-Acre and Why?
 
@@ -24,7 +24,8 @@ This tool was used to compile the map at https://strongtownslangley.org/maps?rev
 ### Polygon Mode (Recommended)
 Parcel data is used to assign colors to each individual parcel based on its value per acre.
 
-![image](https://github.com/StrongTownsLangley/ValuePerAcre/assets/160652425/108e1963-a9b7-44e2-9849-93c9f3d1430f)
+![image](https://github.com/user-attachments/assets/f7571b1a-b58d-45d6-8aec-bf763ae56349)
+
 
 ### Point Mode
 Each block (by default 100m²) is assigned a value based on the properties it contains.
