@@ -190,6 +190,8 @@ Simplified example of the assessments file structure:
 
 ## Credits and Technical Details
 
+This tool was programmed by James Hansen (james@strongtownslangley.org)
+
 This Python implementation is based on the original C# version (now deprecated) at https://github.com/StrongTownsLangley/ValuePerAcre/
 
 Technologies used:
