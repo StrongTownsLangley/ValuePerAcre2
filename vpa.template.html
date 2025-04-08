@@ -42,6 +42,14 @@
             });
         }
         
+        // Format number with commas
+        function formatNumber(value) {
+            return parseFloat(value).toLocaleString('en-US', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            });
+        }
+        
         // Create popup content for property information
         function createPopupContent(properties) {
             var content = '<div class="popup-content">';
@@ -52,7 +60,12 @@
             
             if (properties.FOLIO || properties.id) {
                 var pid = properties.FOLIO || properties.id || 'N/A';
-                content += '<div class="property-info"><span class="property-label">PID:</span> ' + pid + '</div>';
+                content += '<div class="property-info"><span class="property-label">FOLIO:</span> ' + pid + '</div>';
+            }
+            
+            if (properties.size_acres) {
+                content += '<div class="property-info"><span class="property-label">Parcel Size:</span> ' + 
+                    formatNumber(properties.size_acres) + ' Acre(s) (' + formatNumber(properties.size_sqft) + 'ft² / ' + formatNumber(properties.size_sqm) + 'm²)</div>';
             }
             
             // Show the actual assessed value if available
