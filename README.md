@@ -17,7 +17,28 @@ While higher density development typically corresponds with higher taxable value
 
 ## Demo
 
-This tool was used to compile the map at https://strongtownslangley.org/maps?revenue-map
+This tool was used to compile the map at https://strongtownslangley.org/library/maps/valueperacre.php
+
+## Township of Langley Data Sources
+
+For the Township of Langley Data, this was taken from multiple sources:
+
+### 2024 Property Assessments, from TOL Open Data
+Source: https://data-tol.opendata.arcgis.com/datasets/6f63c681511e4856836a7c9f988a0a6f_0/
+This dataset seems to now only include Residential assessments, though used to include all types.
+Archived here as 2024_assessments.geojson
+
+### 2024 Property Assessments, from TOL ArcGIS
+Source: https://mapsvr.tol.ca/arcgisext02/rest/services/GeoSource/DynamicServices/MapServer/1129
+This dataset is used by the GeoSource map and includes ALL assessed values, however we use the Open Data set first and fall back to this one. This data is downloaded using the 00_DownloadAssessmentData.py script.
+
+### Parcel Data
+Source: https://data-tol.opendata.arcgis.com/datasets/cc82def6b6b54586aa7a1e452fcc1f02_0/
+This dataset includes all the parcel outlines
+
+### Tax Rates
+Archived at: https://strongtownslangley.org/library/maps/maps_sources/2024-Tax-Rates.pdf
+Original Tax Rates taken from the TOL Website.
 
 ## Features
 
@@ -29,6 +50,7 @@ Parcel data is used to assign colors to each individual parcel based on its valu
 
 ### Point Mode
 Each block (by default 100m²) is assigned a value based on the properties it contains.
+
 
 ## How to Use
 
