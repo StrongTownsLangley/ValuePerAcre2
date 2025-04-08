@@ -1,9 +1,9 @@
-{
-    "Residential": 3.17967,
-    "Utilities": 38.86440,
-    "MajorIndustry": 6.00953,
-    "LightIndustry": 7.44413,
-    "Business": 9.61864,
-    "Rec_NonProfit": 5.13217,
-    "Farm": 17.99
-}
+[
+    {"code": "Residential", "description": "Residential", "rate": 3.17967},
+    {"code": "Utilities", "description": "Utilities", "rate": 38.86440},
+    {"code": "MajorIndustry", "description": "Major Industry", "rate": 6.00953},
+    {"code": "LightIndustry", "description": "Light Industry", "rate": 7.44413},
+    {"code": "Business", "description": "Business Other", "rate": 9.61864},
+    {"code": "Rec_NonProfit", "description": "Recreation", "rate": 5.13217},
+    {"code": "Farm", "description": "Farm", "rate": 17.99}
+  ]

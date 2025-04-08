@@ -10,36 +10,69 @@ def load_json_file(file_path):
     with open(file_path, 'r', encoding='utf-8') as file:
         return json.load(file)
 
-def calculate_taxable_value(properties, tax_rates, tax_rate_divider=1000):
+def calculate_taxable_value(properties, tax_rates, description_mapping, tax_rate_divider=1000):
     """Calculate taxable value based on tax rates and property assessments."""
     tax = 0
-    for tax_type in tax_rates.keys():
-        buildings_key = f"{tax_type}_Buildings"
-        land_key = f"{tax_type}_Land"
+    
+    # Check if properties has "Description" field, indicating it's from geosource
+    if "Description" in properties:
+        description = properties["Description"]
+        # Find matching tax type for this description
+        tax_type = None
         
-        # Check if the keys exist in properties, otherwise use 0
-        buildings_value = float(properties.get(buildings_key, 0))
-        land_value = float(properties.get(land_key, 0))
-        
-        tax += buildings_value * (tax_rates[tax_type] / tax_rate_divider)
-        tax += land_value * (tax_rates[tax_type] / tax_rate_divider)
+        # Look up the tax rate by description
+        for rate_entry in tax_rates:
+            if rate_entry["description"] == description:
+                tax_type = rate_entry["code"]
+                rate = rate_entry["rate"]
+                
+                # Use GrossLand and GrossImprovements as values
+                land_value = float(properties.get("GrossLand", 0))
+                building_value = float(properties.get("GrossImprovements", 0))
+                
+                tax += building_value * (rate / tax_rate_divider)
+                tax += land_value * (rate / tax_rate_divider)
+                break
+    else:
+        # Handle regular assessment properties
+        for rate_entry in tax_rates:
+            tax_type = rate_entry["code"]
+            rate = rate_entry["rate"]
+            
+            buildings_key = f"{tax_type}_Buildings"
+            land_key = f"{tax_type}_Land"
+            
+            # Check if the keys exist in properties, otherwise use 0
+            buildings_value = float(properties.get(buildings_key, 0))
+            land_value = float(properties.get(land_key, 0))
+            
+            tax += buildings_value * (rate / tax_rate_divider)
+            tax += land_value * (rate / tax_rate_divider)
     
     return round(tax, 2)
 
 def calculate_total_assessed_value(properties):
     """Calculate the total assessed value (sum of all building and land values)."""
-    total_value = 0
-    
-    # Look for any property keys that end with _Buildings or _Land
-    for key, value in properties.items():
-        if key.endswith('_Buildings') or key.endswith('_Land'):
-            try:
-                total_value += float(value)
-            except (ValueError, TypeError):
-                # Skip if the value can't be converted to float
-                pass
-    
-    return round(total_value, 2)
+    # Check if properties has "Description" field, indicating it's from geosource
+    if "Description" in properties:
+        # Use GrossLand and GrossImprovements from geosource
+        land_value = float(properties.get("GrossLand", 0))
+        building_value = float(properties.get("GrossImprovements", 0))
+        return round(land_value + building_value, 2)
+    else:
+        # Original logic for regular assessment properties
+        total_value = 0
+        
+        # Look for any property keys that end with _Buildings or _Land
+        for key, value in properties.items():
+            if key.endswith('_Buildings') or key.endswith('_Land'):
+                try:
+                    total_value += float(value)
+                except (ValueError, TypeError):
+                    # Skip if the value can't be converted to float
+                    pass
+        
+        return round(total_value, 2)
 
 def extract_point_from_geometry(geometry):
     """Safely extract coordinates from a Point geometry."""
@@ -269,12 +302,75 @@ def find_parcels_within_complex(complex_id, complex_data, all_parcels, spatial_i
     
     return contained_parcels
 
+def create_description_mapping(tax_rates):
+    """Create a mapping from Description values to tax types."""
+    mapping = {}
+    for entry in tax_rates:
+        # Each entry has "code" and "description" fields
+        mapping[entry["description"]] = entry["code"]
+    return mapping
+
+def load_geosource_assessments(file_path):
+    """Load the geosource assessments JSON file and create a lookup by FOLIO."""
+    data = load_json_file(file_path)
+    
+    # Process into a dictionary keyed by FOLIO
+    lookup = {}
+    
+    # Check if it's a list structure (not wrapped in a FeatureCollection)
+    if isinstance(data, list):
+        items = data
+    # Otherwise it might be within a structure with features or items
+    elif "features" in data:
+        items = data["features"]
+    elif "items" in data:
+        items = data["items"]
+    else:
+        # Try to find the actual data
+        if isinstance(data, dict) and len(data) == 1:
+            # Might be a single key with the actual list
+            first_key = list(data.keys())[0]
+            if isinstance(data[first_key], list):
+                items = data[first_key]
+            else:
+                items = []
+        else:
+            items = []
+    
+    # Extract attributes
+    for item in items:
+        if "attributes" in item:
+            attributes = item["attributes"]
+            folio = attributes.get("FOLIO")
+            if folio:
+                lookup[folio] = attributes
+    
+    print(f"Loaded {len(lookup)} assessments from geosource file")
+    return lookup
+
 def main():
     # Load the data files
     print("Loading data files...")
-    tax_rates = load_json_file("2024_tax_rates.json")
+    tax_data = load_json_file("2024_tax_rates.json")
+    # Assuming tax_rates is in the format described
+    tax_rates = [
+        {"code": "Residential", "description": "Residential", "rate": 3.17967},
+        {"code": "Utilities", "description": "Utilities", "rate": 38.86440},
+        {"code": "MajorIndustry", "description": "Major Industry", "rate": 6.00953},
+        {"code": "LightIndustry", "description": "Light Industry", "rate": 7.44413},
+        {"code": "Business", "description": "Business Other", "rate": 9.61864},
+        {"code": "Rec_NonProfit", "description": "Recreation", "rate": 5.13217},
+        {"code": "Farm", "description": "Farm", "rate": 17.99}
+    ]
+    
     assessments_geojson = load_json_file("2024_assessments.geojson")
     parcels_geojson = load_json_file("2024_parcels.geojson")
+    
+    # Load the geosource assessments file
+    geosource_assessments = load_geosource_assessments("geosource_assessments_2024.json")
+    
+    # Create mapping from Description values to tax types
+    description_mapping = create_description_mapping(tax_rates)
     
     # Process polygon parcels first
     parcels_with_shapes = {}
@@ -435,6 +531,7 @@ def main():
     unmatched_count = 0
     apartment_count = 0
     direct_match_count = 0
+    geosource_match_count = 0
     
     # Process assessments in batches for better performance
     batch_size = 1000
@@ -462,7 +559,7 @@ def main():
             processed_folios.add(folio)
             
             # Calculate the taxable value and assessed value
-            taxable_value = calculate_taxable_value(properties, tax_rates)
+            taxable_value = calculate_taxable_value(properties, tax_rates, description_mapping)
             assessed_value = calculate_total_assessed_value(properties)
             
             # Check if there's a direct FOLIO match in our parcels (regular case)
@@ -497,10 +594,64 @@ def main():
                         apartment_count += 1
                         break
                 else:
-                    # This assessment doesn't match any parcel
-                    unmatched_count += 1
-                    if unmatched_count <= 10:
-                        print(f"Unmatched: Assessment FOLIO={folio}")
+                    # This assessment doesn't match any parcel in the primary source
+                    # Check the geosource assessments
+                    if folio in geosource_assessments:
+                        geosource_properties = geosource_assessments[folio]
+                        geosource_taxable = calculate_taxable_value(geosource_properties, tax_rates, description_mapping)
+                        geosource_assessed = calculate_total_assessed_value(geosource_properties)
+                        
+                        # Use these values for the parcel if it exists
+                        if folio in unified_parcels:
+                            unified_parcels[folio]["taxable_value"] = geosource_taxable
+                            unified_parcels[folio]["assessed_value"] = geosource_assessed
+                            
+                            # If this parcel is contained within another, add the value to the parent as well
+                            parent_id = unified_parcels[folio]["parent_parcel"]
+                            if parent_id and parent_id in unified_parcels:
+                                unified_parcels[parent_id]["taxable_value"] += geosource_taxable
+                                unified_parcels[parent_id]["assessed_value"] += geosource_assessed
+                                unified_parcels[parent_id]["combined_units"] += 1
+                                if folio not in unified_parcels[parent_id]["combined_parcels"]:
+                                    unified_parcels[parent_id]["combined_parcels"].append(folio)
+                                    
+                            geosource_match_count += 1
+                            matched_count += 1
+                        else:
+                            # Still unmatched
+                            unmatched_count += 1
+                            if unmatched_count <= 10:
+                                print(f"Unmatched: Assessment FOLIO={folio} (not found in parcels)")
+                    else:
+                        # Assessment not found in either source
+                        unmatched_count += 1
+                        if unmatched_count <= 10:
+                            print(f"Unmatched: Assessment FOLIO={folio} (not found in either source)")
+
+    # Now process remaining parcels that had no assessment data from the first pass
+    print("Processing parcels without assessment data...")
+    remaining_parcel_count = 0
+    
+    for parcel_id, parcel_data in tqdm(unified_parcels.items(), desc="Checking geosource for remaining parcels"):
+        # Skip parcels that already have values
+        if parcel_data["taxable_value"] > 0 or parcel_data["assessed_value"] > 0:
+            continue
+            
+        # Skip parcels that are contained within others (they'll get values from their parents)
+        if parcel_data["parent_parcel"]:
+            continue
+            
+        # Check if this parcel has data in the geosource file
+        if parcel_id in geosource_assessments:
+            geosource_properties = geosource_assessments[parcel_id]
+            parcel_data["taxable_value"] = calculate_taxable_value(geosource_properties, tax_rates, description_mapping)
+            parcel_data["assessed_value"] = calculate_total_assessed_value(geosource_properties)
+            geosource_match_count += 1
+            matched_count += 1
+            remaining_parcel_count += 1
+            
+            if remaining_parcel_count <= 10:
+                print(f"Found in geosource: Parcel FOLIO={parcel_id}")
 
     # For any container parcel that didn't get assessments directly, 
     # ensure it has the combined values from all its contained parcels
@@ -542,13 +693,17 @@ def main():
         if folio is None or folio == "" or folio in unified_folio_lookup:
             continue  # Skip if already matched
         
+        # Check if it's in geosource
+        if folio in geosource_assessments:
+            properties = geosource_assessments[folio]  # Use geosource properties
+        
         point_coords = extract_point_from_geometry(feature["geometry"])
         if point_coords:
             unmatched_assessments.append({
                 "index": i,
                 "folio": folio,
                 "coords": point_coords,
-                "taxable_value": calculate_taxable_value(properties, tax_rates),
+                "taxable_value": calculate_taxable_value(properties, tax_rates, description_mapping),
                 "assessed_value": calculate_total_assessed_value(properties)
             })
     
@@ -671,6 +826,7 @@ def main():
     print(f"Parcels in output file: {len(output_features)}")
     print(f"Parcels excluded (contained within others): {excluded_count}")
     print(f"Direct matches: {direct_match_count}")
+    print(f"Geosource matches: {geosource_match_count}")
     print(f"Apartment/units combined: {apartment_count}")
     print(f"Second pass location matches: {second_pass_matches}")
     print(f"Unmatched assessment points: {unmatched_count}")
