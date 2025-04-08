@@ -40,7 +40,8 @@ def rad2deg(rad: float) -> float:
 
 def calculate_polygon_area(polygon: List[List[float]]) -> float:
     """
-    Calculate the area of a polygon in acres.
+    Calculate the area of a polygon in acres using the Shoelace formula with local projection.
+    Calibrated specifically for the Langley, BC area.
     
     Args:
         polygon: A list of points, where each point is [lon, lat]
@@ -48,17 +49,40 @@ def calculate_polygon_area(polygon: List[List[float]]) -> float:
     Returns:
         The area in acres
     """
-    area = 0
-    j = len(polygon) - 1
+    if len(polygon) < 3:
+        return 0.0
     
-    for i in range(len(polygon)):
-        area += (polygon[j][0] + polygon[i][0]) * (polygon[j][1] - polygon[i][1])
-        j = i
+    # Get the centroid of the polygon to use as reference point
+    n = len(polygon) - 1  # Subtract 1 because first and last points are the same in a closed polygon
+    if n <= 0:
+        return 0.0
+        
+    avg_lat = sum(point[1] for point in polygon[:n]) / n
+    avg_lon = sum(point[0] for point in polygon[:n]) / n
     
-    # Convert from square degrees to square meters to acres
-    area_in_square_degrees = abs(area) / 2.0
-    area_in_square_meters = area_in_square_degrees * 12362500000  # Approximation for conversion
-    return area_in_square_meters / 4046.85642  # Convert to acres
+    # Constants for conversion at this latitude
+    meters_per_lat = 111320  # meters per degree latitude (roughly constant)
+    meters_per_lon = 111320 * math.cos(math.radians(avg_lat))  # meters per degree longitude
+    
+    # Convert to local X,Y coordinates in meters
+    local_coords = []
+    for lon, lat in polygon:
+        x = (lon - avg_lon) * meters_per_lon
+        y = (lat - avg_lat) * meters_per_lat
+        local_coords.append((x, y))
+    
+    # Use Shoelace formula to calculate area
+    area = 0.0
+    for i in range(len(local_coords) - 1):
+        x1, y1 = local_coords[i]
+        x2, y2 = local_coords[i + 1]
+        area += (x1 * y2) - (x2 * y1)
+    
+    # Take absolute value and convert to acres
+    area_in_sq_meters = abs(area) / 2.0
+    area_in_acres = area_in_sq_meters / 4046.86
+    
+    return area_in_acres
 
 def find_parcel_bounds(geojson: Dict) -> Tuple[float, float, float, float]:
     """
@@ -368,6 +392,11 @@ def process_parcels_polygon_mode(unified_parcels: Dict, output_folder: str, leve
         # Calculate value per acre
         value_per_acre = taxable_value / total_area
         
+        # Calculate additional area measurements
+        size_acres = total_area
+        size_sqft = total_area * 43560  # 1 acre = 43,560 square feet
+        size_sqm = total_area * 4046.86  # 1 acre = 4,046.86 square meters
+        
         # Create a copy of original feature to preserve all properties
         new_feature = {
             "type": "Feature",
@@ -376,8 +405,11 @@ def process_parcels_polygon_mode(unified_parcels: Dict, output_folder: str, leve
             "properties": orig_properties.copy()  # Keep all original properties
         }
         
-        # Add value_per_acre to properties
+        # Add value_per_acre and size information to properties
         new_feature["properties"]["value_per_acre"] = round(value_per_acre, 2)
+        new_feature["properties"]["size_acres"] = round(size_acres, 2)
+        new_feature["properties"]["size_sqft"] = round(size_sqft, 2)
+        new_feature["properties"]["size_sqm"] = round(size_sqm, 2)
         
         # Also add a formatted property address
         address_parts = []
@@ -399,7 +431,8 @@ def process_parcels_polygon_mode(unified_parcels: Dict, output_folder: str, leve
             "value_per_acre": value_per_acre,
             "level": None
         })
-    
+        
+    # Rest of the function remains the same...
     # Sort properties by value per acre and assign levels
     properties.sort(key=lambda p: p["value_per_acre"])
     
@@ -472,7 +505,7 @@ def process_parcels_polygon_mode(unified_parcels: Dict, output_folder: str, leve
     
     # Generate HTML files
     generate_html_files(min_latitude, max_latitude, min_longitude, max_longitude, levels, geo_json_array, output_folder)
-
+    
 def generate_html_files(min_latitude: float, max_latitude: float, min_longitude: float, max_longitude: float, 
                         levels: int, geo_json_array: List, output_folder: str) -> None:
     """
