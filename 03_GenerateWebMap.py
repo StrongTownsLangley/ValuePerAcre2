@@ -339,9 +339,11 @@ def process_parcels_polygon_mode(unified_parcels: Dict, output_folder: str, leve
     properties = []
     
     for feature in unified_parcels['features']:
-        pid = feature["id"]
+        pid = feature.get("id", "")
         geometry = feature['geometry']
-        taxable_value = feature['properties'].get('TaxableValue', 0)
+        orig_properties = feature['properties']
+        
+        taxable_value = orig_properties.get('TaxableValue', 0)
         
         if taxable_value == 0:
             continue
@@ -366,9 +368,31 @@ def process_parcels_polygon_mode(unified_parcels: Dict, output_folder: str, leve
         # Calculate value per acre
         value_per_acre = taxable_value / total_area
         
+        # Create a copy of original feature to preserve all properties
+        new_feature = {
+            "type": "Feature",
+            "id": pid,
+            "geometry": geometry,
+            "properties": orig_properties.copy()  # Keep all original properties
+        }
+        
+        # Add value_per_acre to properties
+        new_feature["properties"]["value_per_acre"] = round(value_per_acre, 2)
+        
+        # Also add a formatted property address
+        address_parts = []
+        if "HOUSE" in orig_properties and orig_properties["HOUSE"]:
+            address_parts.append(str(orig_properties["HOUSE"]))
+        if "STREET" in orig_properties and orig_properties["STREET"]:
+            address_parts.append(str(orig_properties["STREET"]))
+        if "UNIT" in orig_properties and orig_properties["UNIT"]:
+            address_parts.append(f"Unit {orig_properties['UNIT']}")
+            
+        new_feature["properties"]["formatted_address"] = " ".join(address_parts)
+        
         properties.append({
             "pid": pid,
-            "feature": feature,
+            "feature": new_feature,
             "polygons": polygons,
             "value": taxable_value,
             "total_area": total_area,
@@ -389,6 +413,7 @@ def process_parcels_polygon_mode(unified_parcels: Dict, output_folder: str, leve
         for i in range(items_in_this_level):
             if current_index < len(properties):
                 properties[current_index]["level"] = level
+                properties[current_index]["feature"]["properties"]["level"] = level
                 current_index += 1
     
     # Group properties by level
@@ -413,14 +438,9 @@ def process_parcels_polygon_mode(unified_parcels: Dict, output_folder: str, leve
         max_level_value = max(p["value_per_acre"] for p in level_props)
         avg_level_value = sum(p["value_per_acre"] for p in level_props) / len(level_props)
         
-        # Add features to GeoJSON
+        # Add features to GeoJSON - now keeping original properties plus additional ones
         for prop in level_props:
-            feature = prop["feature"]
-            feature["properties"] = {
-                "level": level,
-                "value_per_acre": prop["value_per_acre"]
-            }
-            geo_json["features"].append(feature)
+            geo_json["features"].append(prop["feature"])
         
         # Add level info
         info = {
@@ -487,6 +507,15 @@ def generate_html_files(min_latitude: float, max_latitude: float, min_longitude:
         #map {
             height: 100vh;
         }
+        .popup-content {
+            min-width: 200px;
+        }
+        .property-info {
+            margin-bottom: 5px;
+        }
+        .property-label {
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -502,6 +531,49 @@ def generate_html_files(min_latitude: float, max_latitude: float, min_longitude:
         // Load GeoJSON files for each tax level
         var numLevels = {LEVELS};
         var taxLevels = [];
+        
+        // Format currency with dollar sign and commas
+        function formatCurrency(value) {
+            return '$' + parseFloat(value).toLocaleString('en-US', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            });
+        }
+        
+        // Create popup content for property information
+        function createPopupContent(properties) {
+            var content = '<div class="popup-content">';
+            
+            if (properties.formatted_address) {
+                content += '<div class="property-info"><span class="property-label">Address:</span> ' + properties.formatted_address + '</div>';
+            }
+            
+            if (properties.FOLIO || properties.id) {
+                var pid = properties.FOLIO || properties.id || 'N/A';
+                content += '<div class="property-info"><span class="property-label">PID:</span> ' + pid + '</div>';
+            }
+            
+            // Show the actual assessed value if available
+            if (properties.AssessedValue) {
+                content += '<div class="property-info"><span class="property-label">Assessed Value:</span> ' + 
+                    formatCurrency(properties.AssessedValue) + '</div>';
+            }
+            
+            // Show property tax as the taxable value
+            if (properties.TaxableValue) {
+                content += '<div class="property-info"><span class="property-label">Estimated Property Taxes Paid (excluding utilities):</span> ' + 
+                    formatCurrency(properties.TaxableValue) + '</div>';
+            }
+            
+            if (properties.value_per_acre) {
+                content += '<div class="property-info"><span class="property-label">Value per Acre:</span> ' + 
+                    formatCurrency(properties.value_per_acre) + '/acre</div>';
+            }
+            
+            content += '</div>';
+            return content;
+        }
+        
         for (var i = 0; i < numLevels; i++) {
             var taxLevel = L.geoJSON(null, {
                 style: function(feature) {
@@ -514,6 +586,28 @@ def generate_html_files(min_latitude: float, max_latitude: float, min_longitude:
                         color: 'hsl(' + hue + ', 100%, 50%)',
                         fillOpacity: 0.45
                     };
+                },
+                onEachFeature: function(feature, layer) {
+                    // Create popup with property info
+                    var popupContent = createPopupContent(feature.properties);
+                    layer.bindPopup(popupContent);
+                    
+                    // Add hover effect
+                    layer.on('mouseover', function() {
+                        this.setStyle({
+                            weight: 2,
+                            opacity: 0.7,
+                            fillOpacity: 0.7
+                        });
+                    });
+                    
+                    layer.on('mouseout', function() {
+                        this.setStyle({
+                            weight: 0.5,
+                            opacity: 0.45,
+                            fillOpacity: 0.45
+                        });
+                    });
                 }
             });
             taxLevels.push(taxLevel);

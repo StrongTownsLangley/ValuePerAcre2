@@ -616,6 +616,23 @@ def main():
         
         # Update the properties to include the combined unit count and taxable value
         parcel_data["properties"]["TaxableValue"] = parcel_data["taxable_value"]
+        
+        # Add the total assessed value to the output
+        total_assessed_value = 0
+        
+        # Get assessment values if available
+        for tax_type in tax_rates.keys():
+            buildings_key = f"{tax_type}_Buildings"
+            land_key = f"{tax_type}_Land"
+            
+            # Add building and land values if present
+            buildings_value = float(parcel_data["properties"].get(buildings_key, 0))
+            land_value = float(parcel_data["properties"].get(land_key, 0))
+            
+            total_assessed_value += buildings_value + land_value
+        
+        # Store the total assessed value in properties
+        parcel_data["properties"]["AssessedValue"] = total_assessed_value
         parcel_data["properties"]["CombinedUnits"] = parcel_data["combined_units"]
         parcel_data["properties"]["CombinedParcels"] = ",".join(parcel_data["combined_parcels"]) if parcel_data["combined_parcels"] else ""
         
