@@ -26,6 +26,21 @@ def calculate_taxable_value(properties, tax_rates, tax_rate_divider=1000):
     
     return round(tax, 2)
 
+def calculate_total_assessed_value(properties):
+    """Calculate the total assessed value (sum of all building and land values)."""
+    total_value = 0
+    
+    # Look for any property keys that end with _Buildings or _Land
+    for key, value in properties.items():
+        if key.endswith('_Buildings') or key.endswith('_Land'):
+            try:
+                total_value += float(value)
+            except (ValueError, TypeError):
+                # Skip if the value can't be converted to float
+                pass
+    
+    return round(total_value, 2)
+
 def extract_point_from_geometry(geometry):
     """Safely extract coordinates from a Point geometry."""
     try:
@@ -295,6 +310,7 @@ def main():
                 "properties": feature["properties"],
                 "combined_units": 0,
                 "taxable_value": 0,
+                "assessed_value": 0,  # Initialize with 0
                 "combined_parcels": []
             }
             
@@ -305,6 +321,7 @@ def main():
                 "combined_units": 0,
                 "combined_parcels": [],
                 "taxable_value": 0,
+                "assessed_value": 0,  # Initialize with 0
                 "parent_parcel": None  # Will be set if this parcel is inside another
             }
         except Exception as e:
@@ -444,18 +461,21 @@ def main():
             # Mark this folio as processed to avoid duplicates
             processed_folios.add(folio)
             
-            # Calculate the taxable value
+            # Calculate the taxable value and assessed value
             taxable_value = calculate_taxable_value(properties, tax_rates)
+            assessed_value = calculate_total_assessed_value(properties)
             
             # Check if there's a direct FOLIO match in our parcels (regular case)
             if folio in unified_parcels:
                 unified_parcels[folio]["taxable_value"] = taxable_value
+                unified_parcels[folio]["assessed_value"] = assessed_value
                 
                 # If this parcel is contained within another, add the value to the parent as well
                 parent_id = unified_parcels[folio]["parent_parcel"]
                 if parent_id:
                     if parent_id in unified_parcels:
                         unified_parcels[parent_id]["taxable_value"] += taxable_value
+                        unified_parcels[parent_id]["assessed_value"] += assessed_value
                         unified_parcels[parent_id]["combined_units"] += 1
                         if folio not in unified_parcels[parent_id]["combined_parcels"]:
                             unified_parcels[parent_id]["combined_parcels"].append(folio)
@@ -469,6 +489,7 @@ def main():
                     if folio in unit_ids and complex_id in unified_parcels:
                         # Add the value to the complex
                         unified_parcels[complex_id]["taxable_value"] += taxable_value
+                        unified_parcels[complex_id]["assessed_value"] += assessed_value
                         unified_parcels[complex_id]["combined_units"] += 1
                         if folio not in unified_parcels[complex_id]["combined_parcels"]:
                             unified_parcels[complex_id]["combined_parcels"].append(folio)
@@ -499,6 +520,7 @@ def main():
                 for child_id in contained_ids:
                     if child_id in unified_parcels:
                         container_data["taxable_value"] += unified_parcels[child_id]["taxable_value"]
+                        container_data["assessed_value"] += unified_parcels[child_id]["assessed_value"]
     
     # Create parallel processing capabilities
     print("Second pass optimization: Creating spatial lookups...")
@@ -526,7 +548,8 @@ def main():
                 "index": i,
                 "folio": folio,
                 "coords": point_coords,
-                "taxable_value": calculate_taxable_value(properties, tax_rates)
+                "taxable_value": calculate_taxable_value(properties, tax_rates),
+                "assessed_value": calculate_total_assessed_value(properties)
             })
     
     print(f"Processing {len(unmatched_assessments)} unmatched assessments...")
@@ -540,6 +563,7 @@ def main():
             folio = assessment["folio"]
             point_coords = assessment["coords"]
             taxable_value = assessment["taxable_value"]
+            assessed_value = assessment["assessed_value"]
             
             # Use a buffer for point search
             minx, miny = point_coords[0] - 0.01, point_coords[1] - 0.01
@@ -555,6 +579,7 @@ def main():
                     if parcels_with_shapes[parcel_id]["shape"].contains(point):
                         # Found a containing parcel
                         unified_parcels[parcel_id]["taxable_value"] += taxable_value
+                        unified_parcels[parcel_id]["assessed_value"] += assessed_value
                         unified_parcels[parcel_id]["combined_units"] += 1
                         unified_parcels[parcel_id]["combined_parcels"].append(folio)
                         second_pass_matches += 1
@@ -616,23 +641,7 @@ def main():
         
         # Update the properties to include the combined unit count and taxable value
         parcel_data["properties"]["TaxableValue"] = parcel_data["taxable_value"]
-        
-        # Add the total assessed value to the output
-        total_assessed_value = 0
-        
-        # Get assessment values if available
-        for tax_type in tax_rates.keys():
-            buildings_key = f"{tax_type}_Buildings"
-            land_key = f"{tax_type}_Land"
-            
-            # Add building and land values if present
-            buildings_value = float(parcel_data["properties"].get(buildings_key, 0))
-            land_value = float(parcel_data["properties"].get(land_key, 0))
-            
-            total_assessed_value += buildings_value + land_value
-        
-        # Store the total assessed value in properties
-        parcel_data["properties"]["AssessedValue"] = total_assessed_value
+        parcel_data["properties"]["AssessedValue"] = parcel_data["assessed_value"]
         parcel_data["properties"]["CombinedUnits"] = parcel_data["combined_units"]
         parcel_data["properties"]["CombinedParcels"] = ",".join(parcel_data["combined_parcels"]) if parcel_data["combined_parcels"] else ""
         
@@ -654,7 +663,7 @@ def main():
     }
     
     # Write to file
-    with open("unified_parcels.geojson", "w", encoding="utf-8") as outfile:
+    with open("unified_parcels.geojson", "w", encoding='utf-8') as outfile:
         json.dump(output_geojson, outfile)
     
     print(f"Process complete!")
