@@ -8,7 +8,6 @@ from jsonfileloader import JsonFileLoader
 from taxablevaluecalculator import TaxableValueCalculator
 from totalassessedvaluecalculator import TotalAssessedValueCalculator
 from geometrypointextractor import GeometryPointExtractor
-from polygonholefiller import PolygonHoleFiller
 from complexpolygonsidentifier import ComplexPolygonsIdentifier
 
 def find_parcels_within_complex(complex_id, complex_data, all_parcels, spatial_idx, idx_to_parcel_id):
