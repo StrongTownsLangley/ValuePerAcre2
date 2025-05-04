@@ -4,303 +4,12 @@ from shapely.geometry import shape, Point, Polygon, mapping
 import shapely.ops
 from tqdm import tqdm  # Import tqdm for progress bars
 from rtree import index  # Import rtree for spatial indexing
-
-def load_json_file(file_path):
-    """Load a JSON file with UTF-8 encoding to avoid character decoding issues."""
-    with open(file_path, 'r', encoding='utf-8') as file:
-        return json.load(file)
-
-def calculate_taxable_value(properties, tax_rates, description_mapping, tax_rate_divider=1000):
-    """Calculate taxable value based on tax rates and property assessments."""
-    tax = 0
-    
-    # Check if properties has "Description" field, indicating it's from geosource
-    if "Description" in properties:
-        description = properties["Description"]
-        # Find matching tax type for this description
-        tax_type = None
-        
-        # Look up the tax rate by description
-        for rate_entry in tax_rates:
-            if rate_entry["description"] == description:
-                tax_type = rate_entry["code"]
-                rate = rate_entry["rate"]
-                
-                # Use GrossLand and GrossImprovements as values
-                land_value = float(properties.get("GrossLand", 0))
-                building_value = float(properties.get("GrossImprovements", 0))
-                
-                tax += building_value * (rate / tax_rate_divider)
-                tax += land_value * (rate / tax_rate_divider)
-                break
-    else:
-        # Handle regular assessment properties
-        for rate_entry in tax_rates:
-            tax_type = rate_entry["code"]
-            rate = rate_entry["rate"]
-            
-            buildings_key = f"{tax_type}_Buildings"
-            land_key = f"{tax_type}_Land"
-            
-            # Check if the keys exist in properties, otherwise use 0
-            buildings_value = float(properties.get(buildings_key, 0))
-            land_value = float(properties.get(land_key, 0))
-            
-            tax += buildings_value * (rate / tax_rate_divider)
-            tax += land_value * (rate / tax_rate_divider)
-    
-    return round(tax, 2)
-
-def calculate_total_assessed_value(properties):
-    """Calculate the total assessed value (sum of all building and land values)."""
-    # Check if properties has "Description" field, indicating it's from geosource
-    if "Description" in properties:
-        # Use GrossLand and GrossImprovements from geosource
-        land_value = float(properties.get("GrossLand", 0))
-        building_value = float(properties.get("GrossImprovements", 0))
-        return round(land_value + building_value, 2)
-    else:
-        # Original logic for regular assessment properties
-        total_value = 0
-        
-        # Look for any property keys that end with _Buildings or _Land
-        for key, value in properties.items():
-            if key.endswith('_Buildings') or key.endswith('_Land'):
-                try:
-                    total_value += float(value)
-                except (ValueError, TypeError):
-                    # Skip if the value can't be converted to float
-                    pass
-        
-        return round(total_value, 2)
-
-def extract_point_from_geometry(geometry):
-    """Safely extract coordinates from a Point geometry."""
-    try:
-        if geometry['type'] == 'Point':
-            return geometry['coordinates']
-        else:
-            # If not a point, try to get the centroid
-            geom_shape = shape(geometry)
-            centroid = geom_shape.centroid
-            return [centroid.x, centroid.y]
-    except Exception as e:
-        print(f"Error extracting point from geometry: {e}")
-        return None
-
-def fill_polygon_holes(geometry):
-    """
-    Fill the holes in a polygon or multipolygon geometry.
-    This will create a solid polygon without interior rings.
-    """
-    try:
-        # Convert the GeoJSON geometry to a shapely geometry
-        geom = shape(geometry)
-        
-        if geom.geom_type == 'Polygon':
-            # Create a new polygon without holes (just the exterior ring)
-            exterior = geom.exterior
-            filled_poly = Polygon(exterior.coords)
-            return mapping(filled_poly)
-            
-        elif geom.geom_type == 'MultiPolygon':
-            # Handle each polygon in the multipolygon
-            filled_polys = []
-            for poly in geom.geoms:
-                exterior = poly.exterior
-                filled_poly = Polygon(exterior.coords)
-                filled_polys.append(filled_poly)
-            
-            # Create a new multipolygon without holes
-            filled_multipoly = shapely.ops.unary_union(filled_polys)
-            return mapping(filled_multipoly)
-        
-        # If not a polygon/multipolygon, return original
-        return geometry
-    except Exception as e:
-        print(f"Error filling polygon holes: {e}")
-        return geometry
-
-def identify_complex_polygons(parcel_shapes):
-    """
-    Identify complex developments where multiple buildings share a common area.
-    These typically have "CMPLX" or similar in their unit field, or are large parcels
-    with holes or complex shapes.
-    """
-    complex_polygons = {}
-    
-    for parcel_id, parcel_data in parcel_shapes.items():
-        properties = parcel_data.get("properties", {})
-        unit = properties.get("UNIT")
-        geometry = parcel_data.get("feature", {}).get("geometry", {})
-        
-        # Check if it's marked as a complex
-        is_complex = unit and (unit == "CMPLX" or "COMPLEX" in unit or "COMMON" in unit)
-        
-        # Or check if it's a polygon with holes (interior rings)
-        has_holes = False
-        try:
-            if geometry.get('type') == 'Polygon':
-                # A polygon with holes has more than one coordinate array
-                has_holes = len(geometry.get('coordinates', [])) > 1
-            elif geometry.get('type') == 'MultiPolygon':
-                # For multipolygons, check each polygon for holes
-                for poly_coords in geometry.get('coordinates', []):
-                    if len(poly_coords) > 1:
-                        has_holes = True
-                        break
-        except Exception:
-            pass
-        
-        # Or check if it's a multipolygon with many parts (potential apartment complex)
-        is_multipart = False
-        try:
-            if geometry.get('type') == 'MultiPolygon':
-                is_multipart = len(geometry.get('coordinates', [])) > 3  # Arbitrary threshold
-        except Exception:
-            pass
-            
-        # Also check for "common" in the street name or other fields
-        common_in_fields = False
-        for field, value in properties.items():
-            if isinstance(value, str) and "COMMON" in value.upper():
-                common_in_fields = True
-                break
-                
-        # Mark as complex if any criteria match
-        if is_complex or has_holes or is_multipart or common_in_fields:
-            print(f"Found complex development: {parcel_id} with unit {unit}")
-            
-            # For complex polygons, fill the holes to ensure we catch all units
-            if has_holes:
-                # Create a copy of the feature with filled holes
-                filled_feature = parcel_data["feature"].copy()
-                filled_feature["geometry"] = fill_polygon_holes(geometry)
-                
-                # Create a new shape from the filled geometry
-                filled_shape = shape(filled_feature["geometry"])
-                
-                # Store both the original and filled versions
-                complex_polygons[parcel_id] = {
-                    "original": parcel_data,
-                    "filled": {
-                        "feature": filled_feature,
-                        "shape": filled_shape,
-                        "properties": properties
-                    }
-                }
-            else:
-                # Just store a reference to the original data
-                complex_polygons[parcel_id] = {
-                    "original": parcel_data,
-                    "filled": parcel_data  # No filling needed
-                }
-    
-    return complex_polygons
-
-def find_parcels_within_complex(complex_id, complex_data, all_parcels, spatial_idx, idx_to_parcel_id):
-    """
-    Find all parcels that are located within a complex development.
-    Uses the filled (hole-free) version of complex polygons to ensure all units are captured.
-    """
-    # Use the filled (no holes) shape for detection
-    complex_shape = complex_data["filled"]["shape"]
-    contained_parcels = []
-    
-    # Get complex bounds for spatial query
-    minx, miny, maxx, maxy = complex_shape.bounds
-    
-    # Query the spatial index
-    potential_parcels = list(spatial_idx.intersection((minx, miny, maxx, maxy)))
-    
-    # Get address info for matching
-    complex_house = complex_data["filled"]["properties"].get("HOUSE")
-    complex_street = complex_data["filled"]["properties"].get("STREET")
-    
-    # Track everything we find for debugging
-    all_found = []
-    
-    for idx in potential_parcels:
-        parcel_id = idx_to_parcel_id.get(idx)
-        
-        if parcel_id and parcel_id != complex_id and parcel_id in all_parcels:
-            parcel_data = all_parcels[parcel_id]
-            parcel_shape = parcel_data["shape"]
-            
-            # Different criteria for containment
-            criteria = {
-                "centroid_inside": False,
-                "mostly_overlapping": False,
-                "address_match": False
-            }
-            
-            # Check if parcel centroid is within the complex
-            parcel_centroid = parcel_shape.centroid
-            criteria["centroid_inside"] = complex_shape.contains(parcel_centroid)
-            
-            # If not, check if polygons overlap substantially
-            if not criteria["centroid_inside"]:
-                try:
-                    if complex_shape.intersects(parcel_shape):
-                        overlap_area = complex_shape.intersection(parcel_shape).area
-                        parcel_area = parcel_shape.area
-                        if parcel_area > 0 and overlap_area / parcel_area > 0.5:  # More than 50% overlap
-                            criteria["mostly_overlapping"] = True
-                except Exception:
-                    pass
-            
-            # Check address match
-            parcel_house = parcel_data["properties"].get("HOUSE")
-            parcel_street = parcel_data["properties"].get("STREET")
-            
-            # Match address if available
-            if (parcel_house and complex_house and parcel_house == complex_house and
-                parcel_street and complex_street and parcel_street == complex_street):
-                criteria["address_match"] = True
-            
-            # Check if unit ID suggests it's part of the complex
-            is_unit = False
-            parcel_unit = parcel_data["properties"].get("UNIT")
-            if parcel_unit and parcel_unit not in ("CMPLX", "COMPLEX", "COMMON"):
-                # It has a unit number, likely part of the complex
-                is_unit = True
-            
-            # Check if it's part of an address range
-            # e.g., if complex is 8068 and parcels are 8050-8099, they're probably related
-            address_range_match = False
-            if parcel_house and complex_house and parcel_street == complex_street:
-                try:
-                    ph = int(parcel_house)
-                    ch = int(complex_house)
-                    if abs(ph - ch) < 50:  # Arbitrary threshold for nearby addresses
-                        address_range_match = True
-                except (ValueError, TypeError):
-                    pass
-            
-            # Determine if this parcel should be included
-            should_include = (
-                (criteria["centroid_inside"] or criteria["mostly_overlapping"]) and 
-                (criteria["address_match"] or address_range_match or is_unit)
-            )
-            
-            # Record this for analysis
-            all_found.append({
-                "parcel_id": parcel_id,
-                "criteria": criteria,
-                "is_unit": is_unit,
-                "address_range_match": address_range_match,
-                "included": should_include
-            })
-            
-            # If it meets our criteria, include it
-            if should_include:
-                contained_parcels.append(parcel_id)
-    
-    # Debug: analyze what we found
-    if len(all_found) > 0:
-        print(f"Complex {complex_id}: Found {len(contained_parcels)} contained parcels out of {len(all_found)} candidates")
-    
-    return contained_parcels
+from jsonfileloader import JsonFileLoader
+from taxablevaluecalculator import TaxableValueCalculator
+from totalassessedvaluecalculator import TotalAssessedValueCalculator
+from geometrypointextractor import GeometryPointExtractor
+from complexpolygonsidentifier import ComplexPolygonsIdentifier
+from parcelswithincomplexfinder import ParcelsWithinComplexFinder
 
 def create_description_mapping(tax_rates):
     """Create a mapping from Description values to tax types."""
@@ -312,7 +21,7 @@ def create_description_mapping(tax_rates):
 
 def load_geosource_assessments(file_path):
     """Load the geosource assessments JSON file and create a lookup by FOLIO."""
-    data = load_json_file(file_path)
+    data = JsonFileLoader.load_json_file(file_path)
     
     # Process into a dictionary keyed by FOLIO
     lookup = {}
@@ -351,7 +60,7 @@ def load_geosource_assessments(file_path):
 def main():
     # Load the data files
     print("Loading data files...")
-    tax_data = load_json_file("2024_tax_rates.json")
+    tax_data = JsonFileLoader.load_json_file("2024_tax_rates.json")
     # Assuming tax_rates is in the format described
     tax_rates = [
         {"code": "Residential", "description": "Residential", "rate": 3.17967},
@@ -363,8 +72,8 @@ def main():
         {"code": "Farm", "description": "Farm", "rate": 17.99}
     ]
     
-    assessments_geojson = load_json_file("2024_assessments.geojson")
-    parcels_geojson = load_json_file("2024_parcels.geojson")
+    assessments_geojson = JsonFileLoader.load_json_file("2024_assessments.geojson")
+    parcels_geojson = JsonFileLoader.load_json_file("2024_parcels.geojson")
     
     # Load the geosource assessments file
     geosource_assessments = load_geosource_assessments("geosource_assessments_2024.json")
@@ -440,7 +149,7 @@ def main():
     
     # Step 1: Identify complex multi-building developments
     print("Identifying complex developments...")
-    complex_developments = identify_complex_polygons(parcels_with_shapes)
+    complex_developments = ComplexPolygonsIdentifier.identify_complex_polygons(parcels_with_shapes)
     print(f"Found {len(complex_developments)} complex developments")
     
     # Step 2: For each complex, find all parcels within it
@@ -448,7 +157,7 @@ def main():
     container_parcels = {}
     
     for complex_id, complex_data in tqdm(complex_developments.items(), desc="Processing complex developments"):
-        contained = find_parcels_within_complex(
+        contained = ParcelsWithinComplexFinder.find_parcels_within_complex(
             complex_id, complex_data, parcels_with_shapes, spatial_idx, idx_to_parcel_id
         )
         
@@ -514,7 +223,7 @@ def main():
     assessment_points = {}
     
     for idx, feature in enumerate(assessments_geojson["features"]):
-        point_coords = extract_point_from_geometry(feature["geometry"])
+        point_coords = GeometryPointExtractor.extract_point_from_geometry(feature["geometry"])
         if point_coords:
             assessment_points[idx] = {
                 "folio": feature["properties"].get("Folio"),
@@ -559,8 +268,8 @@ def main():
             processed_folios.add(folio)
             
             # Calculate the taxable value and assessed value
-            taxable_value = calculate_taxable_value(properties, tax_rates, description_mapping)
-            assessed_value = calculate_total_assessed_value(properties)
+            taxable_value = TaxableValueCalculator.calculate_taxable_value(properties, tax_rates, description_mapping)
+            assessed_value = TotalAssessedValueCalculator.calculate_total_assessed_value(properties)
             
             # Check if there's a direct FOLIO match in our parcels (regular case)
             if folio in unified_parcels:
@@ -598,8 +307,8 @@ def main():
                     # Check the geosource assessments
                     if folio in geosource_assessments:
                         geosource_properties = geosource_assessments[folio]
-                        geosource_taxable = calculate_taxable_value(geosource_properties, tax_rates, description_mapping)
-                        geosource_assessed = calculate_total_assessed_value(geosource_properties)
+                        geosource_taxable = TaxableValueCalculator.calculate_taxable_value(geosource_properties, tax_rates, description_mapping)
+                        geosource_assessed = TotalAssessedValueCalculator.calculate_total_assessed_value(geosource_properties)
                         
                         # Use these values for the parcel if it exists
                         if folio in unified_parcels:
@@ -644,8 +353,8 @@ def main():
         # Check if this parcel has data in the geosource file
         if parcel_id in geosource_assessments:
             geosource_properties = geosource_assessments[parcel_id]
-            parcel_data["taxable_value"] = calculate_taxable_value(geosource_properties, tax_rates, description_mapping)
-            parcel_data["assessed_value"] = calculate_total_assessed_value(geosource_properties)
+            parcel_data["taxable_value"] = TaxableValueCalculator.calculate_taxable_value(geosource_properties, tax_rates, description_mapping)
+            parcel_data["assessed_value"] = TotalAssessedValueCalculator.calculate_total_assessed_value(geosource_properties)
             geosource_match_count += 1
             matched_count += 1
             remaining_parcel_count += 1
@@ -697,14 +406,14 @@ def main():
         if folio in geosource_assessments:
             properties = geosource_assessments[folio]  # Use geosource properties
         
-        point_coords = extract_point_from_geometry(feature["geometry"])
+        point_coords = GeometryPointExtractor.extract_point_from_geometry(feature["geometry"])
         if point_coords:
             unmatched_assessments.append({
                 "index": i,
                 "folio": folio,
                 "coords": point_coords,
-                "taxable_value": calculate_taxable_value(properties, tax_rates, description_mapping),
-                "assessed_value": calculate_total_assessed_value(properties)
+                "taxable_value": TaxableValueCalculator.calculate_taxable_value(properties, tax_rates, description_mapping),
+                "assessed_value": TotalAssessedValueCalculator.calculate_total_assessed_value(properties)
             })
     
     print(f"Processing {len(unmatched_assessments)} unmatched assessments...")
