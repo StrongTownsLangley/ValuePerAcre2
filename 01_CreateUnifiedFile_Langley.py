@@ -7,20 +7,7 @@ from rtree import index  # Import rtree for spatial indexing
 from jsonfileloader import JsonFileLoader
 from taxablevaluecalculator import TaxableValueCalculator
 from totalassessedvaluecalculator import TotalAssessedValueCalculator
-
-def extract_point_from_geometry(geometry):
-    """Safely extract coordinates from a Point geometry."""
-    try:
-        if geometry['type'] == 'Point':
-            return geometry['coordinates']
-        else:
-            # If not a point, try to get the centroid
-            geom_shape = shape(geometry)
-            centroid = geom_shape.centroid
-            return [centroid.x, centroid.y]
-    except Exception as e:
-        print(f"Error extracting point from geometry: {e}")
-        return None
+from geometrypointextractor import GeometryPointExtractor
 
 def fill_polygon_holes(geometry):
     """
@@ -448,7 +435,7 @@ def main():
     assessment_points = {}
     
     for idx, feature in enumerate(assessments_geojson["features"]):
-        point_coords = extract_point_from_geometry(feature["geometry"])
+        point_coords = GeometryPointExtractor.extract_point_from_geometry(feature["geometry"])
         if point_coords:
             assessment_points[idx] = {
                 "folio": feature["properties"].get("Folio"),
@@ -631,7 +618,7 @@ def main():
         if folio in geosource_assessments:
             properties = geosource_assessments[folio]  # Use geosource properties
         
-        point_coords = extract_point_from_geometry(feature["geometry"])
+        point_coords = GeometryPointExtractor.extract_point_from_geometry(feature["geometry"])
         if point_coords:
             unmatched_assessments.append({
                 "index": i,
